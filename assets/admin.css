@@ -1,0 +1,218 @@
+.sud-admin-container {
+  max-width: 1200px;
+}
+
+.sud-form-section {
+  background: #fff;
+  border: 1px solid #ccd0d4;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+  margin: 20px 0;
+  padding: 20px;
+}
+
+.sud-form-section h2 {
+  margin-top: 0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+}
+
+.sud-list-section {
+  background: #fff;
+  border: 1px solid #ccd0d4;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+  margin: 20px 0;
+  padding: 20px;
+}
+
+.sud-list-section h2 {
+  margin-top: 0;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 10px;
+}
+
+.sud-help-section {
+  background: #f0f6fc;
+  border: 1px solid #c3d9ff;
+  border-radius: 4px;
+  margin: 20px 0;
+  padding: 20px;
+}
+
+.sud-help-section h3 {
+  margin-top: 0;
+  color: #0073aa;
+}
+
+.sud-help-section ol {
+  margin-left: 20px;
+}
+
+.sud-help-section li {
+  margin-bottom: 8px;
+}
+
+.sud-help-section code {
+  background: rgba(0, 115, 170, 0.1);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 13px;
+}
+
+/* Form styling */
+#sud-mapping-form .form-table th {
+  width: 200px;
+  vertical-align: top;
+  padding-top: 15px;
+}
+
+#sud-mapping-form .regular-text {
+  width: 100%;
+  max-width: 500px;
+}
+
+#sud-mapping-form .description {
+  margin-top: 5px;
+  font-style: italic;
+  color: #666;
+}
+
+#sud-mapping-form .description code {
+  background: #f1f1f1;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #333;
+}
+
+#browse-media {
+  margin-top: 8px;
+}
+
+/* Table styling */
+.sud-list-section .wp-list-table {
+  border: 1px solid #c3c4c7;
+}
+
+.sud-list-section .wp-list-table th {
+  background: #f6f7f7;
+  border-bottom: 1px solid #c3c4c7;
+}
+
+.sud-list-section .wp-list-table td {
+  vertical-align: middle;
+}
+
+.sud-list-section .wp-list-table code {
+  background: #f1f1f1;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: Monaco, "Courier New", monospace;
+  color: #d63384;
+  word-break: break-all;
+}
+
+.sud-list-section .wp-list-table .row-actions {
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.sud-list-section .wp-list-table .row-actions a {
+  color: #0073aa;
+  text-decoration: none;
+}
+
+.sud-list-section .wp-list-table .row-actions a:hover {
+  color: #005177;
+  text-decoration: underline;
+}
+
+.sud-list-section .wp-list-table .button {
+  margin-right: 5px;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  height: auto;
+}
+
+/* Notice styling */
+.notice.notice-success {
+  border-left-color: #00a32a;
+}
+
+.notice.notice-error {
+  border-left-color: #d63638;
+}
+
+/* Responsive design */
+@media screen and (max-width: 782px) {
+  .sud-admin-container {
+    margin: 0 -20px;
+  }
+
+  .sud-form-section,
+  .sud-list-section,
+  .sud-help-section {
+    margin: 20px 0;
+    border-left: 0;
+    border-right: 0;
+  }
+
+  #sud-mapping-form .form-table th,
+  #sud-mapping-form .form-table td {
+    display: block;
+    width: 100%;
+    padding: 10px 0;
+  }
+
+  #sud-mapping-form .form-table th {
+    border-bottom: 0;
+  }
+
+  .sud-list-section .wp-list-table {
+    font-size: 14px;
+  }
+
+  .sud-list-section .wp-list-table th,
+  .sud-list-section .wp-list-table td {
+    padding: 8px 10px;
+  }
+}
+
+/* Loading states */
+.button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Form validation */
+.sud-form-section input:invalid {
+  border-color: #d63638;
+  box-shadow: 0 0 2px rgba(214, 54, 56, 0.8);
+}
+
+.sud-form-section input:valid {
+  border-color: #00a32a;
+}
+
+/* Animations */
+.sud-list-section .wp-list-table tbody tr {
+  transition: opacity 0.3s ease;
+}
+
+.sud-list-section .wp-list-table tbody tr.deleting {
+  opacity: 0.5;
+}
+
+/* Button hover states */
+.sud-list-section .edit-mapping:hover {
+  background-color: #f0f6fc;
+  border-color: #0073aa;
+  color: #0073aa;
+}
+
+.sud-list-section .delete-mapping:hover {
+  background-color: #fcf0f1;
+  border-color: #d63638;
+  color: #d63638;
+}

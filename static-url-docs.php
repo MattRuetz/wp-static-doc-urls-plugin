@@ -1,16 +1,12 @@
 <?php
 /**
- * Plugin Name: Static URL Docs
- * Plugin URI: https://github.com/MattRuetz/wp-static-doc-urls-plugin
- * Description: Provides static URLs for documents that remain unchanged when files are updated, solving the problem of broken links when WordPress media files are replaced.
- * Version: 1.0.1
+ * Plugin Name: Static URL Documents
+ * Plugin URI: https://mattruetz.com/
+ * Description: Create permanent URLs for documents that automatically redirect to the latest version, solving the WordPress media library URL change issue.
+ * Version: 1.1.0
  * Author: Matt Ruetz
  * License: GPL v2 or later
- * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: static-url-docs
- * Requires at least: 5.0
- * Tested up to: 6.4
- * Requires PHP: 7.4
  */
 
 // Prevent direct access
@@ -19,353 +15,271 @@ if (!defined('ABSPATH')) {
 }
 
 // Define plugin constants
-if (!defined('STATIC_URL_DOCS_VERSION')) {
-    define('STATIC_URL_DOCS_VERSION', '1.0.1');
-}
-if (!defined('STATIC_URL_DOCS_PLUGIN_DIR')) {
-    define('STATIC_URL_DOCS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-}
-if (!defined('STATIC_URL_DOCS_PLUGIN_URL')) {
-    define('STATIC_URL_DOCS_PLUGIN_URL', plugin_dir_url(__FILE__));
-}
+define('SUD_PLUGIN_URL', plugin_dir_url(__FILE__));
+define('SUD_PLUGIN_PATH', plugin_dir_path(__FILE__));
+define('SUD_VERSION', '1.0.0');
 
-// Main plugin class
-if (!class_exists('StaticUrlDocs')) {
-    class StaticUrlDocs {
+class StaticUrlDocs {
+    
+    public function __construct() {
+        add_action('init', array($this, 'init'));
+        add_action('admin_menu', array($this, 'add_admin_menu'));
+        add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
+        add_action('wp_ajax_sud_save_mapping', array($this, 'ajax_save_mapping'));
+        add_action('wp_ajax_sud_delete_mapping', array($this, 'ajax_delete_mapping'));
         
-        private $table_name;
+        // Hook into multiple points to catch our URLs
+        add_action('parse_request', array($this, 'early_redirect_check'));
+        add_action('template_redirect', array($this, 'handle_redirect'));
         
-        public function __construct() {
-            global $wpdb;
-            $this->table_name = $wpdb->prefix . 'static_url_docs';
-            
-            // Hook into WordPress
-            add_action('init', array($this, 'init'));
-            register_activation_hook(__FILE__, array($this, 'activate'));
-            register_deactivation_hook(__FILE__, array($this, 'deactivate'));
-            add_action('admin_menu', array($this, 'add_admin_menu'));
-            add_action('template_redirect', array($this, 'handle_static_url_request'));
-        }
+        register_activation_hook(__FILE__, array($this, 'activate'));
+        register_deactivation_hook(__FILE__, array($this, 'deactivate'));
+    }
     
     public function init() {
-        add_rewrite_rule(
-            '^docs/([^/]+)/?$',
-            'index.php?static_doc_slug=$matches[1]',
-            'top'
-        );
-        add_query_var('static_doc_slug');
+        // Add rewrite rules for our static URLs
+        add_rewrite_rule('^docs/([^/]+)/?$', 'index.php?sud_doc=$matches[1]', 'top');
+        add_filter('query_vars', array($this, 'add_query_vars'));
+        
+        // Hook into parse_request to handle our custom URLs before WordPress tries to find pages
+        add_action('parse_request', array($this, 'parse_request'));
+    }
+    
+    public function add_query_vars($vars) {
+        $vars[] = 'sud_doc';
+        return $vars;
+    }
+    
+    public function parse_request($wp) {
+        // Check if the request is for our docs URL
+        if (preg_match('/^docs\/([^\/]+)\/?$/', $wp->request, $matches)) {
+            // Set our query var
+            $wp->query_vars['sud_doc'] = $matches[1];
+            
+            // Handle the redirect immediately
+            $this->handle_redirect();
+        }
+    }
+    
+    public function early_redirect_check() {
+        // Check REQUEST_URI directly for our docs pattern
+        if (isset($_SERVER['REQUEST_URI'])) {
+            $request_uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+            
+            if (preg_match('/\/docs\/([^\/]+)\/?$/', $request_uri, $matches)) {
+                $doc_slug = $matches[1];
+                
+                global $wpdb;
+                $table_name = $wpdb->prefix . 'static_url_docs';
+                
+                $mapping = $wpdb->get_row($wpdb->prepare(
+                    "SELECT * FROM $table_name WHERE static_slug = %s",
+                    $doc_slug
+                ));
+                
+                if ($mapping) {
+                    // Redirect immediately before WordPress processes the request further
+                    wp_redirect($mapping->document_url, 301);
+                    exit;
+                } else {
+                    // Document not found - return 404
+                    status_header(404);
+                    wp_die('Document not found. The requested document "' . esc_html($doc_slug) . '" does not exist.', 'Document Not Found', array('response' => 404));
+                }
+            }
+        }
     }
     
     public function activate() {
-        try {
-            $this->create_database_table();
-            $this->init(); // Make sure rewrite rules are added
-            flush_rewrite_rules();
-        } catch (Exception $e) {
-            error_log('Static URL Docs activation error: ' . $e->getMessage());
-        }
-    }
-    
-    public function deactivate() {
+        // Create database table
+        $this->create_table();
+        
+        // Flush rewrite rules
         flush_rewrite_rules();
     }
     
-    private function create_database_table() {
+    public function deactivate() {
+        // Flush rewrite rules
+        flush_rewrite_rules();
+    }
+    
+    private function create_table() {
         global $wpdb;
+        
+        $table_name = $wpdb->prefix . 'static_url_docs';
         
         $charset_collate = $wpdb->get_charset_collate();
         
-        $sql = "CREATE TABLE {$this->table_name} (
+        $sql = "CREATE TABLE $table_name (
             id mediumint(9) NOT NULL AUTO_INCREMENT,
-            slug varchar(255) NOT NULL,
-            attachment_id bigint(20) NOT NULL,
-            title varchar(255) NOT NULL,
+            static_slug varchar(255) NOT NULL,
+            document_url text NOT NULL,
+            document_title varchar(255) NOT NULL,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
-            UNIQUE KEY slug (slug),
-            KEY attachment_id (attachment_id)
-        ) {$charset_collate};";
+            UNIQUE KEY static_slug (static_slug)
+        ) $charset_collate;";
         
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-        $result = dbDelta($sql);
-        
-        // Log any database errors
-        if ($wpdb->last_error) {
-            error_log('Static URL Docs database error: ' . $wpdb->last_error);
-        }
+        dbDelta($sql);
     }
     
     public function add_admin_menu() {
-        add_management_page(
-            __('Static URL Docs', 'static-url-docs'),
-            __('Static URL Docs', 'static-url-docs'),
+        add_menu_page(
+            'Static URL Documents',
+            'Static URLs',
             'manage_options',
             'static-url-docs',
-            array($this, 'admin_page')
+            array($this, 'admin_page'),
+            'dashicons-admin-links',
+            30
         );
     }
     
-    public function handle_static_url_request() {
-        $slug = get_query_var('static_doc_slug');
-        
-        if (!$slug) {
+    public function enqueue_admin_scripts($hook) {
+        if ($hook !== 'toplevel_page_static-url-docs') {
             return;
         }
         
-        global $wpdb;
+        // Enqueue WordPress media scripts for the media library browser
+        wp_enqueue_media();
         
-        $result = $wpdb->get_row($wpdb->prepare(
-            "SELECT attachment_id FROM {$this->table_name} WHERE slug = %s",
-            $slug
+        wp_enqueue_script('sud-admin', SUD_PLUGIN_URL . 'assets/admin.js', array('jquery'), SUD_VERSION, true);
+        wp_enqueue_style('sud-admin', SUD_PLUGIN_URL . 'assets/admin.css', array(), SUD_VERSION);
+        
+        wp_localize_script('sud-admin', 'sud_ajax', array(
+            'ajax_url' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('sud_nonce')
         ));
-        
-        if (!$result) {
-            wp_die(__('Document not found.', 'static-url-docs'), 404);
-        }
-        
-        $attachment_url = wp_get_attachment_url($result->attachment_id);
-        
-        if (!$attachment_url) {
-            wp_die(__('Document file not found.', 'static-url-docs'), 404);
-        }
-        
-        wp_redirect($attachment_url, 302);
-        exit;
     }
     
     public function admin_page() {
-        if (isset($_POST['action'])) {
-            $this->handle_admin_actions();
-        }
-        
-        $this->render_admin_page();
+        include SUD_PLUGIN_PATH . 'templates/admin-page.php';
     }
     
-    private function handle_admin_actions() {
-        if (!wp_verify_nonce($_POST['_wpnonce'], 'static_url_docs_action')) {
-            wp_die(__('Security check failed.', 'static-url-docs'));
+    public function ajax_save_mapping() {
+        check_ajax_referer('sud_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
         }
         
-        global $wpdb;
+        $static_slug = sanitize_text_field($_POST['static_slug']);
+        $document_url = esc_url_raw($_POST['document_url']);
+        $document_title = sanitize_text_field($_POST['document_title']);
+        $mapping_id = intval($_POST['mapping_id']);
         
-        switch ($_POST['action']) {
-            case 'add':
-                $slug = sanitize_text_field($_POST['slug']);
-                $attachment_id = intval($_POST['attachment_id']);
-                $title = sanitize_text_field($_POST['title']);
-                
-                if (empty($slug) || empty($attachment_id) || empty($title)) {
-                    add_action('admin_notices', function() {
-                        echo '<div class="notice notice-error"><p>' . __('All fields are required.', 'static-url-docs') . '</p></div>';
-                    });
-                    break;
-                }
-                
-                $result = $wpdb->insert(
-                    $this->table_name,
-                    array(
-                        'slug' => $slug,
-                        'attachment_id' => $attachment_id,
-                        'title' => $title
-                    ),
-                    array('%s', '%d', '%s')
-                );
-                
-                if ($result === false) {
-                    add_action('admin_notices', function() {
-                        echo '<div class="notice notice-error"><p>' . __('Failed to create static URL. Slug may already exist.', 'static-url-docs') . '</p></div>';
-                    });
-                } else {
-                    add_action('admin_notices', function() {
-                        echo '<div class="notice notice-success"><p>' . __('Static URL created successfully.', 'static-url-docs') . '</p></div>';
-                    });
-                }
-                break;
-                
-            case 'update':
-                $id = intval($_POST['id']);
-                $attachment_id = intval($_POST['attachment_id']);
-                
-                if (empty($id) || empty($attachment_id)) {
-                    add_action('admin_notices', function() {
-                        echo '<div class="notice notice-error"><p>' . __('Invalid data provided.', 'static-url-docs') . '</p></div>';
-                    });
-                    break;
-                }
-                
-                $result = $wpdb->update(
-                    $this->table_name,
-                    array('attachment_id' => $attachment_id),
-                    array('id' => $id),
-                    array('%d'),
-                    array('%d')
-                );
-                
-                if ($result !== false) {
-                    add_action('admin_notices', function() {
-                        echo '<div class="notice notice-success"><p>' . __('Document updated successfully.', 'static-url-docs') . '</p></div>';
-                    });
-                } else {
-                    add_action('admin_notices', function() {
-                        echo '<div class="notice notice-error"><p>' . __('Failed to update document.', 'static-url-docs') . '</p></div>';
-                    });
-                }
-                break;
-                
-            case 'delete':
-                $id = intval($_POST['id']);
-                
-                if (empty($id)) {
-                    add_action('admin_notices', function() {
-                        echo '<div class="notice notice-error"><p>' . __('Invalid ID provided.', 'static-url-docs') . '</p></div>';
-                    });
-                    break;
-                }
-                
-                $result = $wpdb->delete(
-                    $this->table_name,
-                    array('id' => $id),
-                    array('%d')
-                );
-                
-                if ($result !== false) {
-                    add_action('admin_notices', function() {
-                        echo '<div class="notice notice-success"><p>' . __('Static URL deleted successfully.', 'static-url-docs') . '</p></div>';
-                    });
-                } else {
-                    add_action('admin_notices', function() {
-                        echo '<div class="notice notice-error"><p>' . __('Failed to delete static URL.', 'static-url-docs') . '</p></div>';
-                    });
-                }
-                break;
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'static_url_docs';
+        
+        if ($mapping_id > 0) {
+            // Update existing mapping
+            $result = $wpdb->update(
+                $table_name,
+                array(
+                    'static_slug' => $static_slug,
+                    'document_url' => $document_url,
+                    'document_title' => $document_title
+                ),
+                array('id' => $mapping_id),
+                array('%s', '%s', '%s'),
+                array('%d')
+            );
+        } else {
+            // Create new mapping
+            $result = $wpdb->insert(
+                $table_name,
+                array(
+                    'static_slug' => $static_slug,
+                    'document_url' => $document_url,
+                    'document_title' => $document_title
+                ),
+                array('%s', '%s', '%s')
+            );
+        }
+        
+        if ($result !== false) {
+            wp_send_json_success('Mapping saved successfully');
+        } else {
+            wp_send_json_error('Failed to save mapping');
         }
     }
     
-    private function render_admin_page() {
+    public function ajax_delete_mapping() {
+        check_ajax_referer('sud_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Unauthorized');
+        }
+        
+        $mapping_id = intval($_POST['mapping_id']);
+        
         global $wpdb;
+        $table_name = $wpdb->prefix . 'static_url_docs';
         
-        $static_urls = $wpdb->get_results("SELECT * FROM {$this->table_name} ORDER BY created_at DESC");
+        $result = $wpdb->delete($table_name, array('id' => $mapping_id), array('%d'));
         
-        ?>
-        <div class="wrap">
-            <h1><?php _e('Static URL Docs', 'static-url-docs'); ?></h1>
+        if ($result !== false) {
+            wp_send_json_success('Mapping deleted successfully');
+        } else {
+            wp_send_json_error('Failed to delete mapping');
+        }
+    }
+    
+    public function handle_redirect() {
+        // Try to get the doc slug from query vars or parse it from the request
+        $doc_slug = get_query_var('sud_doc');
+        
+        // If not found in query vars, try to parse from REQUEST_URI
+        if (empty($doc_slug) && isset($_SERVER['REQUEST_URI'])) {
+            $request_uri = $_SERVER['REQUEST_URI'];
+            if (preg_match('/\/docs\/([^\/\?]+)/', $request_uri, $matches)) {
+                $doc_slug = $matches[1];
+            }
+        }
+        
+        if (!empty($doc_slug)) {
+            global $wpdb;
+            $table_name = $wpdb->prefix . 'static_url_docs';
             
-            <div class="card">
-                <h2><?php _e('Add New Static URL', 'static-url-docs'); ?></h2>
-                <form method="post" action="">
-                    <?php wp_nonce_field('static_url_docs_action'); ?>
-                    <input type="hidden" name="action" value="add">
-                    <table class="form-table">
-                        <tr>
-                            <th scope="row">
-                                <label for="title"><?php _e('Title', 'static-url-docs'); ?></label>
-                            </th>
-                            <td>
-                                <input type="text" id="title" name="title" class="regular-text" required>
-                                <p class="description"><?php _e('Descriptive title for this static URL', 'static-url-docs'); ?></p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="slug"><?php _e('URL Slug', 'static-url-docs'); ?></label>
-                            </th>
-                            <td>
-                                <input type="text" id="slug" name="slug" class="regular-text" required>
-                                <p class="description"><?php _e('URL-friendly name (e.g., "sales-sheet" creates /docs/sales-sheet/)', 'static-url-docs'); ?></p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="attachment_id"><?php _e('Attachment ID', 'static-url-docs'); ?></label>
-                            </th>
-                            <td>
-                                <input type="number" id="attachment_id" name="attachment_id" class="regular-text" required>
-                                <p class="description"><?php _e('WordPress media library attachment ID', 'static-url-docs'); ?></p>
-                            </td>
-                        </tr>
-                    </table>
-                    <?php submit_button(__('Create Static URL', 'static-url-docs')); ?>
-                </form>
-            </div>
+            $mapping = $wpdb->get_row($wpdb->prepare(
+                "SELECT * FROM $table_name WHERE static_slug = %s",
+                $doc_slug
+            ));
             
-            <h2><?php _e('Existing Static URLs', 'static-url-docs'); ?></h2>
-            
-            <?php if (empty($static_urls)): ?>
-                <p><?php _e('No static URLs created yet.', 'static-url-docs'); ?></p>
-            <?php else: ?>
-                <table class="wp-list-table widefat fixed striped">
-                    <thead>
-                        <tr>
-                            <th><?php _e('Title', 'static-url-docs'); ?></th>
-                            <th><?php _e('Static URL', 'static-url-docs'); ?></th>
-                            <th><?php _e('Current File', 'static-url-docs'); ?></th>
-                            <th><?php _e('Actions', 'static-url-docs'); ?></th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($static_urls as $url): ?>
-                            <tr>
-                                <td><?php echo esc_html($url->title); ?></td>
-                                <td>
-                                    <a href="<?php echo home_url('/docs/' . $url->slug . '/'); ?>" target="_blank">
-                                        <?php echo home_url('/docs/' . $url->slug . '/'); ?>
-                                    </a>
-                                </td>
-                                <td>
-                                    <?php 
-                                    $attachment = get_post($url->attachment_id);
-                                    if ($attachment) {
-                                        echo esc_html($attachment->post_title);
-                                        echo ' <small>(ID: ' . $url->attachment_id . ')</small>';
-                                    } else {
-                                        echo '<span style="color: red;">' . __('File not found', 'static-url-docs') . '</span>';
-                                    }
-                                    ?>
-                                </td>
-                                <td>
-                                    <form method="post" style="display: inline;">
-                                        <?php wp_nonce_field('static_url_docs_action'); ?>
-                                        <input type="hidden" name="action" value="update">
-                                        <input type="hidden" name="id" value="<?php echo $url->id; ?>">
-                                        <input type="number" name="attachment_id" value="<?php echo $url->attachment_id; ?>" style="width: 80px;">
-                                        <input type="submit" value="<?php _e('Update', 'static-url-docs'); ?>" class="button button-small">
-                                    </form>
-                                    
-                                    <form method="post" style="display: inline;" onsubmit="return confirm('<?php _e('Are you sure you want to delete this static URL?', 'static-url-docs'); ?>');">
-                                        <?php wp_nonce_field('static_url_docs_action'); ?>
-                                        <input type="hidden" name="action" value="delete">
-                                        <input type="hidden" name="id" value="<?php echo $url->id; ?>">
-                                        <input type="submit" value="<?php _e('Delete', 'static-url-docs'); ?>" class="button button-small button-link-delete">
-                                    </form>
-                                </td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            <?php endif; ?>
-            
-            <div class="card" style="margin-top: 20px;">
-                <h3><?php _e('How to Use', 'static-url-docs'); ?></h3>
-                <ol>
-                    <li><?php _e('Upload your document to the WordPress Media Library', 'static-url-docs'); ?></li>
-                    <li><?php _e('Note the Attachment ID from the media library', 'static-url-docs'); ?></li>
-                    <li><?php _e('Create a static URL above using a memorable slug', 'static-url-docs'); ?></li>
-                    <li><?php _e('Share the static URL (/docs/your-slug/) with clients', 'static-url-docs'); ?></li>
-                    <li><?php _e('When you need to update the document, upload the new version and update the Attachment ID', 'static-url-docs'); ?></li>
-                </ol>
-                <p><strong><?php _e('Note:', 'static-url-docs'); ?></strong> <?php _e('The static URL will always redirect to the current version of your document, even when you update it.', 'static-url-docs'); ?></p>
-            </div>
-        </div>
-        <?php
+            if ($mapping) {
+                // Use 301 redirect for better SEO and caching
+                wp_redirect($mapping->document_url, 301);
+                exit;
+            } else {
+                // Document not found - return 404
+                status_header(404);
+                wp_die('Document not found. The requested document "' . esc_html($doc_slug) . '" does not exist.', 'Document Not Found', array('response' => 404));
+            }
+        }
+    }
+    
+    public function get_all_mappings() {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'static_url_docs';
+        
+        return $wpdb->get_results("SELECT * FROM $table_name ORDER BY created_at DESC");
+    }
+    
+    // Debug function to test if a mapping exists (can be called from browser)
+    public function debug_mapping($slug) {
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'static_url_docs';
+        
+        $mapping = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM $table_name WHERE static_slug = %s",
+            $slug
+        ));
+        
+        return $mapping;
     }
 }
 
 // Initialize the plugin
-function static_url_docs_init() {
-    new StaticUrlDocs();
-}
-
-// Hook the initialization
-add_action('plugins_loaded', 'static_url_docs_init');
-}
+new StaticUrlDocs(); 
