@@ -1,37 +1,51 @@
 <?php
 /**
  * Plugin Name: Static URL Docs
- * Plugin URI: https://example.com/static-url-docs
+ * Plugin URI: https://github.com/MattRuetz/wp-static-doc-urls-plugin
  * Description: Provides static URLs for documents that remain unchanged when files are updated, solving the problem of broken links when WordPress media files are replaced.
- * Version: 1.0.0
- * Author: Your Name
+ * Version: 1.0.1
+ * Author: Matt Ruetz
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: static-url-docs
+ * Requires at least: 5.0
+ * Tested up to: 6.4
+ * Requires PHP: 7.4
  */
 
+// Prevent direct access
 if (!defined('ABSPATH')) {
     exit;
 }
 
-define('STATIC_URL_DOCS_VERSION', '1.0.0');
-define('STATIC_URL_DOCS_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('STATIC_URL_DOCS_PLUGIN_URL', plugin_dir_url(__FILE__));
+// Define plugin constants
+if (!defined('STATIC_URL_DOCS_VERSION')) {
+    define('STATIC_URL_DOCS_VERSION', '1.0.1');
+}
+if (!defined('STATIC_URL_DOCS_PLUGIN_DIR')) {
+    define('STATIC_URL_DOCS_PLUGIN_DIR', plugin_dir_path(__FILE__));
+}
+if (!defined('STATIC_URL_DOCS_PLUGIN_URL')) {
+    define('STATIC_URL_DOCS_PLUGIN_URL', plugin_dir_url(__FILE__));
+}
 
-class StaticUrlDocs {
-    
-    private $table_name;
-    
-    public function __construct() {
-        global $wpdb;
-        $this->table_name = $wpdb->prefix . 'static_url_docs';
+// Main plugin class
+if (!class_exists('StaticUrlDocs')) {
+    class StaticUrlDocs {
         
-        add_action('init', array($this, 'init'));
-        register_activation_hook(__FILE__, array($this, 'activate'));
-        register_deactivation_hook(__FILE__, array($this, 'deactivate'));
-        add_action('admin_menu', array($this, 'add_admin_menu'));
-        add_action('template_redirect', array($this, 'handle_static_url_request'));
-    }
+        private $table_name;
+        
+        public function __construct() {
+            global $wpdb;
+            $this->table_name = $wpdb->prefix . 'static_url_docs';
+            
+            // Hook into WordPress
+            add_action('init', array($this, 'init'));
+            register_activation_hook(__FILE__, array($this, 'activate'));
+            register_deactivation_hook(__FILE__, array($this, 'deactivate'));
+            add_action('admin_menu', array($this, 'add_admin_menu'));
+            add_action('template_redirect', array($this, 'handle_static_url_request'));
+        }
     
     public function init() {
         add_rewrite_rule(
@@ -43,8 +57,13 @@ class StaticUrlDocs {
     }
     
     public function activate() {
-        $this->create_database_table();
-        flush_rewrite_rules();
+        try {
+            $this->create_database_table();
+            $this->init(); // Make sure rewrite rules are added
+            flush_rewrite_rules();
+        } catch (Exception $e) {
+            error_log('Static URL Docs activation error: ' . $e->getMessage());
+        }
     }
     
     public function deactivate() {
@@ -69,7 +88,12 @@ class StaticUrlDocs {
         ) {$charset_collate};";
         
         require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-        dbDelta($sql);
+        $result = dbDelta($sql);
+        
+        // Log any database errors
+        if ($wpdb->last_error) {
+            error_log('Static URL Docs database error: ' . $wpdb->last_error);
+        }
     }
     
     public function add_admin_menu() {
@@ -337,4 +361,11 @@ class StaticUrlDocs {
     }
 }
 
-new StaticUrlDocs();
+// Initialize the plugin
+function static_url_docs_init() {
+    new StaticUrlDocs();
+}
+
+// Hook the initialization
+add_action('plugins_loaded', 'static_url_docs_init');
+}
